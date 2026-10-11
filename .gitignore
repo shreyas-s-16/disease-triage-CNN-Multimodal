@@ -16,8 +16,7 @@ data/rgb/raw/hf_dataset/
 data/thermal/raw/terravic/*.zip
 data/thermal/raw/terravic/face*/
 
-# Checkpoints (large model files)
-checkpoints/*/best_model.pt
+# Checkpoints (large model files) - allow best_model.pt via Git LFS
 checkpoints/*/final_model.pt
 checkpoints/*/checkpoint_epoch_*.pt
 
@@ -39,8 +38,13 @@ Thumbs.db
 logs/
 *.log
 
-# Results (generated)
-results/
+# Results (generated) - allow to be committed
+!results/
+results/**
+
+# Screenshots - allow to be committed
+!screenshots/
+screenshots/**
 
 # Wandb / MLflow
 wandb/
@@ -55,3 +59,7 @@ mlruns/
 # Environment
 .env
 *.pkl
+
+# But allow encoder pickles
+!checkpoints/*/disease_encoder.pkl
+!checkpoints/*/symptom_encoder.pkl

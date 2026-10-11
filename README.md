@@ -178,6 +178,29 @@ This project is for research/educational purposes only.
 - Terravic: IEEE OTCBWS Benchmark (research only)
 - Disease Symptom Prediction: CC-BY-SA-4.0
 
+## Design Decision: Unpaired Multimodal Training
+
+### Problem
+Standard multimodal fusion assumes paired samples (e.g., each patient has RGB image, thermal image, and tabular data). Our datasets come from independent sources:
+- HAM10000: 10,015 dermoscopy images with skin lesion labels
+- Disease Symptom Prediction: 4,920 tabular records with symptom→disease mappings  
+- Terravic: ~21,000 thermal face images (no fever labels)
+
+There are no patient-level correspondences across datasets.
+
+### Solution: Unpaired Training with Modality Dropout
+1. **Visual head** trained exclusively on HAM10000 (RGB images → 7 skin lesion classes)
+2. **Fever/Triage heads** trained exclusively on tabular data (symptoms → fever flag, triage level)
+3. **Thermal encoder** pre-trained via contrastive learning (SimCLR) on Terravic faces
+4. **Fusion** learns to combine modalities with attention, using **modality dropout** (p=0.2) during training to learn robust representations when modalities are missing
+5. **Missing-modality masking** at inference: zero projections + `key_padding_mask` in attention
+
+### Benefits
+- No fabricated paired labels (avoids false correlations)
+- Each head learns from its native data distribution
+- Fusion gracefully degrades when modalities are missing
+- Thermal encoder learns general thermal features without fever supervision
+
 ## Citation
 
 If you use this pipeline, please cite the original datasets:

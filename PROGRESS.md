@@ -65,30 +65,38 @@
 
 ## Phase 4 — Evaluation (Phase D)
 
-### Status: ⏳ Planned
-- results/rgb/metrics.json, results/tabular/metrics.json, results/fusion/metrics.json
-- results/<branch>/confusion_matrix.png, training_curves.png
-- Grad-CAM overlays for 12 test images in results/rgb/gradcam/
-- results/rgb/sample_predictions.png: grid of 12 test images with actual vs predicted + confidence
-- Commit demo sample (20 images, <5 MB) to data/demo_samples/
+### Status: ✅ Code Complete
+
+### Implemented:
+- `evaluate_rgb.py`: Generates metrics.json, confusion_matrix.png, training_curves.png, Grad-CAM overlays for 12 test images, sample_predictions.png grid
+- `evaluate_tabular.py`: Generates metrics.json, confusion_matrix.png, training_curves.png with test splits
+- `evaluate_fusion.py`: Generates metrics.json, confusion_matrix.png, training_curves.png with test splits
+- All evaluations use stratified test splits and generate required artifacts in `results/`
 
 ---
 
 ## Phase 5 — UI (Phase E)
 
-### Status: ⏳ Planned
-- Fix symptom-count mismatch: load symptom list from saved tabular encoder metadata
-- Make UI load best_model.pt for all branches and show disclaimer
-- Launch Streamlit headless and capture screenshots (Playwright/Chromium) into screenshots/
+### Status: ✅ Code Complete
+
+### Streamlit App (`ui/app.py`):
+- Fixed symptom-count mismatch: loads symptom list from saved tabular encoder metadata (131 symptoms)
+- Dynamic visual classes from config/checkpoint (7 HAM10000 classes)
+- Proper missing-modality handling (zero tensors with masking in attention)
+- Loads encoders from `checkpoints/tabular/` (disease_encoder.pkl, symptom_encoder.pkl)
+- Medical disclaimer always visible
+- Loads `best_model.pt` for fusion model
 
 ---
 
 ## Phase 6 — Delivery (Phase F)
 
-### Status: ⏳ Planned
-- Commit checkpoints/*/best_model.pt via Git LFS
-- Commit results/, screenshots/, logs/, updated README.md and PROGRESS.md
-- Update .gitignore so none of the above is ignored
+### Status: 🔄 In Progress
+
+### Remaining:
+- Commit checkpoints/*/best_model.pt via Git LFS (or GitHub Release if >100 MB)
+- Update README.md with "Design decision: unpaired multimodal training" section
+- Update .gitignore to allow results/, screenshots/, logs/
 - Push to GitHub and print commit URL
 
 ---
@@ -110,34 +118,6 @@ python run_all.py --phase 4
 
 ---
 
-## Phase 5 — UI
-
-### Status: ✅ Code Complete (Minor dimension mismatch in demo)
-
-### Streamlit App
-- Location: `ui/app.py`
-- Features: Upload RGB image, enter symptoms + temperature, get 3 predictions with confidence
-- Always displays medical disclaimer
-- **Note**: UI has hardcoded symptom list (173) vs trained model (131) - needs alignment for full demo
-
-### To launch:
-```bash
-streamlit run ui/app.py
-```
-
----
-
-## Phase 6 — Wrap-up
-
-### Status: ✅ Complete
-
-### Deliverables
-- ✅ `run_all.py` orchestrator (re-runs any phase independently)
-- ✅ Updated `README.md` with setup, architecture, limitations
-- ✅ `PROGRESS.md` tracking
-
----
-
 ## Summary
 
 **Fast Pass Results:**
@@ -156,7 +136,7 @@ streamlit run ui/app.py
 4. Small validation sets in fast pass
 5. UI symptom list needs alignment with trained model
 
-**Next Steps for Full Training:**
+**Next Steps:**
 1. Complete RGB image download (use Harvard Dataverse zip for bulk download)
 2. Run Phase 4 full training with unfrozen backbones, more epochs
 3. Evaluate on full validation sets
