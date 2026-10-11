@@ -1,5 +1,6 @@
 """
 Streamlit UI for Disease Triage Demo.
+Fixed symptom-count mismatch and loads encoders from checkpoints.
 """
 import streamlit as st
 import torch
@@ -63,20 +64,38 @@ st.markdown("""
 
 
 @st.cache_resource
-def load_model(config_path: str, checkpoint_path: str):
-    """Load the fusion model."""
+def load_encoders():
+    """Load symptom and disease encoders from tabular checkpoint."""
+    try:
+        with open("checkpoints/tabular/disease_encoder.pkl", 'rb') as f:
+            disease_encoder = pickle.load(f)
+        with open("checkpoints/tabular/symptom_encoder.pkl", 'rb') as f:
+            symptom_encoder = pickle.load(f)
+        return disease_encoder, symptom_encoder
+    except Exception as e:
+        st.warning(f"Could not load encoders: {e}")
+        return None, None
+
+
+@st.cache_resource
+def load_model(config_path: str, checkpoint_path: str, disease_encoder, symptom_encoder):
+    """Load the fusion model with proper dimensions from encoders."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
     
     device = get_device()
     
+    # Get dimensions from encoders
+    num_visual_classes = 7  # HAM10000 classes
+    num_triage_classes = 3
+    num_symptoms = len(symptom_encoder.classes_) if symptom_encoder else 131
+    
     # Load encoders info from saved checkpoints
-    # For demo, we'll create the model architecture
     rgb_encoder = RGBEncoder(
         pretrained=False,
         frozen=False,
         output_dim=config['model']['rgb_output_dim'],
-        num_classes=7  # HAM10000 classes
+        num_classes=num_visual_classes
     )
     
     thermal_encoder = ThermalEncoder(
@@ -87,7 +106,7 @@ def load_model(config_path: str, checkpoint_path: str):
     )
     
     tabular_encoder = TabularEncoder(
-        input_dim=173,  # Number of symptoms from training
+        input_dim=num_symptoms,
         hidden_dims=config['model']['tabular_hidden_dims'],
         output_dim=config['model']['tabular_output_dim'],
         dropout=config['model'].get('dropout', 0.3)
@@ -107,7 +126,7 @@ def load_model(config_path: str, checkpoint_path: str):
         thermal_encoder=thermal_encoder,
         tabular_encoder=tabular_encoder,
         fusion_encoder=fusion_encoder,
-        num_visual_classes=7,
+        num_visual_classes=num_visual_classes,
         num_triage_classes=3
     ).to(device)
     
@@ -121,20 +140,7 @@ def load_model(config_path: str, checkpoint_path: str):
         st.warning(f"Checkpoint not found at {checkpoint_path}. Using random weights.")
     
     model.eval()
-    return model, device, config
-
-
-@st.cache_resource
-def load_encoders():
-    """Load symptom and disease encoders."""
-    try:
-        with open("checkpoints/tabular/disease_encoder.pkl", 'rb') as f:
-            disease_encoder = pickle.load(f)
-        with open("checkpoints/tabular/symptom_encoder.pkl", 'rb') as f:
-            symptom_encoder = pickle.load(f)
-        return disease_encoder, symptom_encoder
-    except:
-        return None, None
+    return model, device, config, num_visual_classes
 
 
 def preprocess_image(image: Image.Image, image_size: int = 224) -> torch.Tensor:
@@ -163,8 +169,7 @@ def preprocess_thermal(image: Image.Image, image_size: int = 224) -> torch.Tenso
 def preprocess_symptoms(symptoms: list, symptom_encoder) -> torch.Tensor:
     """Preprocess symptoms to multi-hot vector."""
     if symptom_encoder is None:
-        # Fallback: create zeros
-        return torch.zeros(1, 173)
+        return torch.zeros(1, 131)
     features = symptom_encoder.transform([symptoms]).astype(np.float32)
     return torch.tensor(features)
 
@@ -194,9 +199,15 @@ st.sidebar.header("⚙️ Configuration")
 config_path = st.sidebar.text_input("Config Path", "configs/fusion_fast.yaml")
 checkpoint_path = st.sidebar.text_input("Checkpoint Path", "checkpoints/fusion/best_model.pt")
 
-# Load model
-model, device, config = load_model(config_path, checkpoint_path)
+# Load encoders first
 disease_encoder, symptom_encoder = load_encoders()
+
+# Load model
+model, device, config, num_visual_classes = load_model(config_path, checkpoint_path, disease_encoder, symptom_encoder)
+
+# Get visual classes from config or use default
+visual_classes = ['akiec', 'bcc', 'bkl', 'df', 'mel', 'nv', 'vasc']
+triage_classes = ['mild', 'moderate', 'refer']
 
 # Main input area
 col1, col2 = st.columns([1, 1])
@@ -213,9 +224,9 @@ with col1:
         st.image(rgb_image, caption="Uploaded RGB Image", width=300)
         rgb_tensor = preprocess_image(rgb_image, config['data']['image_size']).to(device)
     else:
-        # Use dummy tensor
+        # Use zero tensor (missing modality will be handled by masking)
         rgb_tensor = torch.zeros(1, 3, config['data']['image_size'], config['data']['image_size']).to(device)
-        st.info("No RGB image uploaded. Using dummy input.")
+        st.info("No RGB image uploaded. Modality will be masked.")
     
     # Thermal Image
     st.subheader("Thermal Image (Face)")
@@ -227,7 +238,7 @@ with col1:
         thermal_tensor = preprocess_thermal(thermal_image, config['data']['image_size']).to(device)
     else:
         thermal_tensor = torch.zeros(1, 1, config['data']['image_size'], config['data']['image_size']).to(device)
-        st.info("No thermal image uploaded. Using dummy input.")
+        st.info("No thermal image uploaded. Modality will be masked.")
 
 with col2:
     st.header("📋 Symptoms & Vitals")
@@ -242,40 +253,50 @@ with col2:
     has_chills = st.checkbox("Chills")
     has_shivering = st.checkbox("Shivering")
     
-    # Other symptoms
-    st.subheader("Other Symptoms")
-    all_symptoms = [
-        'itching', 'skin_rash', 'nodal_skin_eruptions', 'continuous_sneezing', 'shivering',
-        'chills', 'joint_pain', 'stomach_pain', 'acidity', 'ulcers_on_tongue', 'muscle_wasting',
-        'vomiting', 'burning_micturition', 'spotting_urination', 'fatigue', 'weight_gain',
-        'anxiety', 'cold_hands_and_feets', 'mood_swings', 'weight_loss', 'restlessness',
-        'lethargy', 'patches_in_throat', 'irregular_sugar_level', 'cough', 'high_fever',
-        'sunken_eyes', 'breathlessness', 'sweating', 'dehydration', 'indigestion', 'headache',
-        'yellowish_skin', 'dark_urine', 'nausea', 'loss_of_appetite', 'pain_behind_the_eyes',
-        'back_pain', 'constipation', 'abdominal_pain', 'diarrhoea', 'mild_fever', 'yellow_urine',
-        'yellowing_of_eyes', 'acute_liver_failure', 'fluid_overload', 'swelling_of_stomach',
-        'swelled_lymph_nodes', 'malaise', 'blurred_and_distorted_vision', 'phlegm',
-        'throat_irritation', 'redness_of_eyes', 'sinus_pressure', 'runny_nose', 'congestion',
-        'chest_pain', 'weakness_in_limbs', 'fast_heart_rate', 'pain_during_bowel_movements',
-        'pain_in_anal_region', 'bloody_stool', 'irritation_in_anus', 'neck_pain', 'dizziness',
-        'cramps', 'bruising', 'obesity', 'swollen_legs', 'swollen_blood_vessels',
-        'puffy_face_and_eyes', 'enlarged_thyroid', 'brittle_nails', 'swollen_extremeties',
-        'excessive_hunger', 'extra_marital_contacts', 'drying_and_tingling_lips',
-        'slurred_speech', 'knee_pain', 'hip_joint_pain', 'muscle_weakness', 'stiff_neck',
-        'swelling_joints', 'movement_stiffness', 'spinning_movements', 'loss_of_balance',
-        'unsteadiness', 'weakness_of_one_body_side', 'loss_of_smell', 'bladder_discomfort',
-        'foul_smell_ofurine', 'continuous_feel_of_urine', 'passage_of_gases', 'internal_itching',
-        'toxic_look_(typhos)', 'depression', 'irritability', 'muscle_pain', 'altered_sensorium',
-        'red_spots_over_body', 'belly_pain', 'abnormal_menstruation', 'dischromic_patches',
-        'watering_from_eyes', 'increased_appetite', 'polyuria', 'family_history',
-        'mucoid_sputum', 'rusty_sputum', 'lack_of_concentration', 'visual_disturbances',
-        'receiving_blood_transfusion', 'receiving_unsterile_injections', 'coma',
-        'stomach_bleeding', 'distention_of_abdomen', 'history_of_alcohol_consumption',
-        'blood_in_sputum', 'prominent_veins_on_calf', 'palpitations', 'painful_walking',
-        'pus_filled_pimples', 'blackheads', 'scurring', 'skin_peeling', 'silver_like_dusting',
-        'small_dents_in_nails', 'inflammatory_nails', 'blister', 'red_sore_around_nose',
-        'yellow_crust_ooze', 'prognosis'
-    ]
+    # Other symptoms - load from encoder
+    if symptom_encoder is not None:
+        all_symptoms = symptom_encoder.classes_.tolist()
+    else:
+        # Fallback
+        all_symptoms = [
+            'itching', 'skin_rash', 'nodal_skin_eruptions', 'continuous_sneezing', 'shivering',
+            'chills', 'joint_pain', 'stomach_pain', 'acidity', 'ulcers_on_tongue', 'muscle_wasting',
+            'vomiting', 'burning_micturition', 'spotting_urination', 'fatigue', 'weight_gain',
+            'anxiety', 'cold_hands_and_feets', 'mood_swings', 'weight_loss', 'restlessness',
+            'lethargy', 'patches_in_throat', 'irregular_sugar_level', 'cough', 'high_fever',
+            'sunken_eyes', 'breathlessness', 'sweating', 'dehydration', 'indigestion', 'headache',
+            'yellowish_skin', 'dark_urine', 'nausea', 'loss_of_appetite', 'pain_behind_the_eyes',
+            'back_pain', 'constipation', 'abdominal_pain', 'diarrhoea', 'mild_fever', 'yellow_urine',
+            'yellowing_of_eyes', 'acute_liver_failure', 'fluid_overload', 'swelling_of_stomach',
+            'swelled_lymph_nodes', 'malaise', 'blurred_and_distorted_vision', 'phlegm',
+            'throat_irritation', 'redness_of_eyes', 'sinus_pressure', 'runny_nose', 'congestion',
+            'chest_pain', 'weakness_in_limbs', 'fast_heart_rate', 'pain_during_bowel_movements',
+            'pain_in_anal_region', 'bloody_stool', 'irritation_in_anus', 'neck_pain', 'dizziness',
+            'cramps', 'bruising', 'obesity', 'swollen_legs', 'swollen_blood_vessels',
+            'puffy_face_and_eyes', 'enlarged_thyroid', 'brittle_nails', 'swollen_extremeties',
+            'excessive_hunger', 'extra_marital_contacts', 'drying_and_tingling_lips',
+            'slurred_speech', 'knee_pain', 'hip_joint_pain', 'muscle_weakness', 'stiff_neck',
+            'swelling_joints', 'movement_stiffness', 'spinning_movements', 'loss_of_balance',
+            'unsteadiness', 'weakness_of_one_body_side', 'loss_of_smell', 'bladder_discomfort',
+            'foul_smell_ofurine', 'continuous_feel_of_urine', 'passage_of_gases', 'internal_itching',
+            'toxic_look_(typhos)', 'depression', 'irritability', 'muscle_pain', 'altered_sensorium',
+            'red_spots_over_body', 'belly_pain', 'abnormal_menstruation', 'dischromic_patches',
+            'watering_from_eyes', 'increased_appetite', 'polyuria', 'family_history',
+            'mucoid_sputum', 'rusty_sputum', 'lack_of_concentration', 'visual_disturbances',
+            'receiving_blood_transfusion', 'receiving_unsterile_injections', 'coma',
+            'stomach_bleeding', 'distention_of_abdomen', 'history_of_alcohol_consumption',
+            'blood_in_sputum', 'prominent_veins_on_calf', 'palpitations', 'painful_walking',
+            'pus_filled_pimples', 'blackheads', 'scurring', 'skin_peeling', 'silver_like_dusting',
+            'small_dents_in_nails', 'inflammatory_nails', 'blister', 'red_sore_around_nose',
+            'yellow_crust_ooze', 'prognosis'
+        ]
+    
+    # Fever checkboxes
+    st.subheader("Fever Symptoms")
+    has_high_fever = st.checkbox("High Fever")
+    has_mild_fever = st.checkbox("Mild Fever")
+    has_chills = st.checkbox("Chills")
+    has_shivering = st.checkbox("Shivering")
     
     # Auto-add fever symptoms based on checkboxes
     selected_symptoms = []
@@ -313,13 +334,11 @@ if st.button("🔍 Run Triage", type="primary", use_container_width=True):
             visual_probs = torch.softmax(outputs['visual'], dim=1)[0]
             visual_idx = visual_probs.argmax().item()
             visual_conf = visual_probs[visual_idx].item()
-            visual_classes = ['akiec', 'bcc', 'bkl', 'df', 'mel', 'nv', 'vasc']
             visual_pred = visual_classes[visual_idx]
             
             triage_probs = torch.softmax(outputs['triage'], dim=1)[0]
             triage_idx = triage_probs.argmax().item()
             triage_conf = triage_probs[triage_idx].item()
-            triage_classes = ['mild', 'moderate', 'refer']
             triage_pred = triage_classes[triage_idx]
     
     # Display results

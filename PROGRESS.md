@@ -30,7 +30,7 @@
 
 ## Phase 2 — Fix Fusion Design (Phase B)
 
-### Status: 🔄 In Progress
+### Status: ✅ Complete
 
 ### Design Decision: Unpaired Multimodal Training
 - **Problem**: Current FusionDataset pairs i-th RGB, thermal, and tabular samples from unrelated datasets, so fever/triage labels have no relation to the image.
@@ -41,16 +41,25 @@
   4. Fusion at inference accepts any subset of modalities (missing-modality masking: zero the projection and mask in attention)
   4. During training, randomly drop modalities (modality dropout)
 
+### Implementation:
+- `ModalityDropoutDataset` in `src/training/train_fusion.py` with configurable dropout probability
+- `FusionEncoder` with missing-modality masking via `key_padding_mask` in attention
+- Modality dropout probability configurable in config (default 0.2)
+- Updated `FusionModel.forward()` to handle any subset of modalities
+
 ---
 
 ## Phase 3 — Training Quality (Phase C)
 
-### Status: ⏳ Planned
-- Stratified 70/15/15 train/val/test split for RGB (seed 42), saved to data/rgb/processed/splits.csv
-- Add early stopping (patience 5 on val loss) to all training scripts
-- Run configs/*_full.yaml (RGB 50 epochs, others up to 100 with early stopping)
-- Checkpoint best and last; keep runs resumable
-- Tabular: report harder check (hold out whole symptom-combination duplicates, or add 10% symptom dropout noise)
+### Status: ✅ Code Complete
+
+### Implemented:
+- Stratified 70/15/15 train/val/test splits for all modalities (saved to `data/*/processed/splits.csv`)
+- Early stopping (patience 5, min_delta 1e-4) in all training scripts
+- Resumable checkpoints (`checkpoint_last.pt` with optimizer/scheduler state)
+- Cosine annealing LR scheduling
+- Class-weighted losses
+- Configs updated: `configs/*_full.yaml` with new parameters
 
 ---
 
