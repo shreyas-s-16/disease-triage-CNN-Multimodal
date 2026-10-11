@@ -1,0 +1,34 @@
+# Fusion Model Full Training Config
+data:
+  rgb_metadata_path: "data/rgb/raw/HAM10000_metadata.csv"
+  rgb_images_dir: "data/rgb/raw/images"
+  thermal_root_dir: "data/thermal/raw/terravic"
+  tabular_dataset_path: "data/tabular/raw/dataset.csv"
+  tabular_severity_path: "data/tabular/raw/Symptom-severity.csv"
+  image_size: 224
+  subset_frac: 1.0
+  val_split: 0.2
+
+model:
+  rgb_output_dim: 512
+  thermal_output_dim: 512
+  tabular_output_dim: 256
+  fusion_dim: 512
+  num_heads: 8
+  dropout: 0.4
+  rgb_frozen: false
+  thermal_frozen: false
+  rgb_checkpoint: "checkpoints/rgb/best_model.pt"
+  thermal_checkpoint: "checkpoints/thermal/encoder_final.pt"
+  tabular_checkpoint: "checkpoints/tabular/best_model.pt"
+
+training:
+  batch_size: 16
+  lr: 1e-4
+  weight_decay: 1e-4
+  epochs: 100
+  checkpoint_dir: "checkpoints/fusion"
+  save_every: 10
+  num_workers: 4
+
+seed: 42

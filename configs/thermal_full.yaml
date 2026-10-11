@@ -1,0 +1,24 @@
+# Thermal Encoder Full Pretraining Config
+data:
+  root_dir: "data/thermal/raw/terravic"
+  image_size: 224
+  subset_frac: 1.0
+  val_split: 0.2
+
+model:
+  pretrained: true
+  frozen: false
+  output_dim: 512
+  proj_dim: 128
+
+training:
+  batch_size: 64
+  lr: 1e-4
+  weight_decay: 1e-4
+  epochs: 100
+  checkpoint_dir: "checkpoints/thermal"
+  save_every: 10
+  num_workers: 4
+  temperature: 0.5
+
+seed: 42

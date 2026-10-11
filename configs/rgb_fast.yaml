@@ -1,0 +1,24 @@
+# RGB Baseline Fast Pass Config
+data:
+  metadata_path: "data/rgb/raw/HAM10000_metadata_balanced_subset.csv"
+  images_dir: "data/rgb/raw/images"
+  image_size: 224
+  subset_frac: 1.0  # Already balanced subset
+  balance_classes: true
+  val_split: 0.2
+
+model:
+  pretrained: true
+  frozen: true
+  output_dim: 512
+
+training:
+  batch_size: 32
+  lr: 1e-3
+  weight_decay: 1e-4
+  epochs: 8
+  checkpoint_dir: "checkpoints/rgb"
+  save_every: 4
+  num_workers: 4
+
+seed: 42

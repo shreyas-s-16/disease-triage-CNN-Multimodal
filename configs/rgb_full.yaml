@@ -1,0 +1,24 @@
+# RGB Baseline Full Training Config
+data:
+  metadata_path: "data/rgb/raw/HAM10000_metadata.csv"
+  images_dir: "data/rgb/raw/images"
+  image_size: 224
+  subset_frac: 1.0
+  balance_classes: true
+  val_split: 0.2
+
+model:
+  pretrained: true
+  frozen: false  # Unfreeze for full training
+  output_dim: 512
+
+training:
+  batch_size: 32
+  lr: 1e-4  # Lower LR for fine-tuning
+  weight_decay: 1e-4
+  epochs: 50
+  checkpoint_dir: "checkpoints/rgb"
+  save_every: 10
+  num_workers: 4
+
+seed: 42

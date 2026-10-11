@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Data directories (large files)
+data/*/raw/images/
+data/*/raw/hf_dataset/
+data/rgb/raw/images/
+data/rgb/raw/hf_dataset/
+data/thermal/raw/terravic/*.zip
+data/thermal/raw/terravic/face*/
+
+# Checkpoints (large model files)
+checkpoints/*/best_model.pt
+checkpoints/*/final_model.pt
+checkpoints/*/checkpoint_epoch_*.pt
+
+# Hugging Face cache
+.huggingface/
+*.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Results (generated)
+results/
+
+# Wandb / MLflow
+wandb/
+mlruns/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit
+.streamlit/
+
+# Environment
+.env
+*.pkl

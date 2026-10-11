@@ -1,0 +1,36 @@
+# Fusion Model Fast Pass Config
+data:
+  rgb_metadata_path: "data/rgb/raw/HAM10000_metadata_balanced_subset.csv"
+  rgb_images_dir: "data/rgb/raw/images"
+  thermal_root_dir: "data/thermal/raw/terravic"
+  tabular_dataset_path: "data/tabular/raw/dataset.csv"
+  tabular_severity_path: "data/tabular/raw/Symptom-severity.csv"
+  image_size: 224
+  subset_frac: 0.2  # Use 20% for fast pass
+  val_split: 0.2
+
+model:
+  rgb_output_dim: 512
+  thermal_output_dim: 512
+  tabular_output_dim: 256
+  tabular_hidden_dims: [512, 256]
+  fusion_dim: 512
+  num_heads: 4
+  dropout: 0.3
+  rgb_frozen: true
+  thermal_frozen: true
+  # Pretrained checkpoints (will be loaded if they exist)
+  rgb_checkpoint: "checkpoints/rgb/best_model.pt"
+  thermal_checkpoint: "checkpoints/thermal/best_model.pt"
+  tabular_checkpoint: "checkpoints/tabular/best_model.pt"
+
+training:
+  batch_size: 16
+  lr: 1e-3
+  weight_decay: 1e-4
+  epochs: 8
+  checkpoint_dir: "checkpoints/fusion"
+  save_every: 4
+  num_workers: 4
+
+seed: 42

@@ -1,0 +1,24 @@
+# Thermal Encoder Pretraining Fast Pass Config
+data:
+  root_dir: "data/thermal/raw/terravic"
+  image_size: 224
+  subset_frac: 0.2  # Use 20% for fast pass
+  val_split: 0.2
+
+model:
+  pretrained: true
+  frozen: true
+  output_dim: 512
+  proj_dim: 128
+
+training:
+  batch_size: 32
+  lr: 1e-3
+  weight_decay: 1e-4
+  epochs: 8
+  checkpoint_dir: "checkpoints/thermal"
+  save_every: 4
+  num_workers: 4
+  temperature: 0.5
+
+seed: 42

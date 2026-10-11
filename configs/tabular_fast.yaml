@@ -1,0 +1,22 @@
+# Tabular Baseline Fast Pass Config
+data:
+  dataset_path: "data/tabular/raw/dataset.csv"
+  severity_path: "data/tabular/raw/Symptom-severity.csv"
+  subset_frac: 1.0
+  val_split: 0.2
+
+model:
+  hidden_dims: [512, 256]
+  output_dim: 256
+  dropout: 0.3
+
+training:
+  batch_size: 64
+  lr: 1e-3
+  weight_decay: 1e-4
+  epochs: 8
+  checkpoint_dir: "checkpoints/tabular"
+  save_every: 4
+  num_workers: 0
+
+seed: 42
