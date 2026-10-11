@@ -1,55 +1,83 @@
 """
-Training script for Fusion model.
+Training script for Fusion model with modality dropout and missing-modality masking.
+Design: Unpaired multimodal training - visual head on RGB, fever/triage on tabular,
+thermal encoder as pre-trained features. Fusion accepts any subset of modalities.
 """
 import os
 import argparse
 import yaml
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm import tqdm
 import numpy as np
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, List
+from sklearn.model_selection import train_test_split
 
 from src.utils import get_device, set_seed
 from src.data_loaders import (
-    create_rgb_dataloaders, create_tabular_dataloaders, create_thermal_dataloaders
+    create_rgb_dataloaders, create_tabular_dataloaders, create_thermal_dataloaders,
+    HAM10000Dataset, SymptomDataset, TerravicDataset, get_rgb_transforms, get_thermal_transforms
 )
 from src.models import (
     RGBEncoder, ThermalEncoder, TabularEncoder, FusionEncoder, FusionModel
 )
 
 
-class FusionDataset(Dataset):
-    """Combined dataset for multi-modal fusion training."""
+class ModalityDropoutDataset(Dataset):
+    """
+    Dataset for fusion training with modality dropout.
+    During training, randomly drops modalities to teach the model to handle missing inputs.
+    """
     
     def __init__(
         self,
         rgb_dataset,
         thermal_dataset,
         tabular_dataset,
-        split: str = 'train'
+        split: str = 'train',
+        modality_dropout_p: float = 0.2,
+        is_train: bool = True
     ):
         self.rgb_dataset = rgb_dataset
         self.thermal_dataset = thermal_dataset
         self.tabular_dataset = tabular_dataset
         self.split = split
+        self.modality_dropout_p = modality_dropout_p if is_train else 0.0
+        self.is_train = is_train
         
         # Use the minimum length to ensure all modalities have data
         self.length = min(len(rgb_dataset), len(thermal_dataset), len(tabular_dataset))
-        print(f"FusionDataset {split}: {self.length} samples (min of RGB={len(rgb_dataset)}, "
-              f"Thermal={len(thermal_dataset)}, Tabular={len(tabular_dataset)})")
+        print(f"FusionDataset {split}: {self.length} samples")
     
     def __len__(self):
         return self.length
+    
+    def _apply_modality_dropout(self, sample: dict) -> dict:
+        """Randomly zero out modalities during training."""
+        if not self.is_train or self.modality_dropout_p <= 0:
+            return sample
+        
+        # Create a copy to avoid modifying original
+        sample = {k: v.clone() if isinstance(v, torch.Tensor) else v for k, v in sample.items()}
+        
+        # Randomly drop each modality independently
+        for modality in ['rgb', 'thermal', 'tabular']:
+            if torch.rand(1).item() < self.modality_dropout_p:
+                # Zero out the modality
+                if modality in sample:
+                    sample[modality] = torch.zeros_like(sample[modality])
+        
+        return sample
     
     def __getitem__(self, idx):
         rgb_img, rgb_label = self.rgb_dataset[idx]
         thermal_img, _ = self.thermal_dataset[idx]
         tabular_data = self.tabular_dataset[idx]
         
-        return {
+        sample = {
             'rgb': rgb_img,
             'thermal': thermal_img,
             'tabular': tabular_data['symptoms'],
@@ -57,6 +85,8 @@ class FusionDataset(Dataset):
             'fever_label': tabular_data['fever'],
             'triage_label': tabular_data['triage']
         }
+        
+        return self._apply_modality_dropout(sample)
 
 
 def create_fusion_dataloaders(
@@ -70,15 +100,16 @@ def create_fusion_dataloaders(
     subset_frac: float = 1.0,
     val_split: float = 0.2,
     num_workers: int = 4,
-    random_seed: int = 42
+    random_seed: int = 42,
+    modality_dropout_p: float = 0.2
 ) -> Tuple[DataLoader, DataLoader, Dict]:
-    """Create train and validation dataloaders for fusion model."""
+    """Create train and validation dataloaders for fusion model with modality dropout."""
     
     # Create individual datasets
     rgb_train_loader, rgb_val_loader, rgb_info = create_rgb_dataloaders(
         metadata_path=rgb_metadata_path,
         images_dir=rgb_images_dir,
-        batch_size=1,  # We'll batch in fusion dataset
+        batch_size=1,
         image_size=image_size,
         subset_frac=subset_frac,
         balance_classes=True,
@@ -115,9 +146,15 @@ def create_fusion_dataloaders(
     tabular_train_ds = tabular_train_loader.dataset
     tabular_val_ds = tabular_val_loader.dataset
     
-    # Create fusion datasets
-    train_dataset = FusionDataset(rgb_train_ds, thermal_train_ds, tabular_train_ds, 'train')
-    val_dataset = FusionDataset(rgb_val_ds, thermal_val_ds, tabular_val_ds, 'val')
+    # Create fusion datasets with modality dropout
+    train_dataset = ModalityDropoutDataset(
+        rgb_train_ds, thermal_train_ds, tabular_train_ds, 'train',
+        modality_dropout_p=modality_dropout_p, is_train=True
+    )
+    val_dataset = ModalityDropoutDataset(
+        rgb_val_ds, thermal_val_ds, tabular_val_ds, 'val',
+        modality_dropout_p=0.0, is_train=False
+    )
     
     train_loader = DataLoader(
         train_dataset,
@@ -149,7 +186,7 @@ def create_fusion_dataloaders(
 
 
 def train_epoch(model, loader, criteria, optimizer, device, epoch):
-    """Train for one epoch."""
+    """Train for one epoch with modality dropout."""
     model.train()
     running_loss = {'fever': 0.0, 'visual': 0.0, 'triage': 0.0, 'total': 0.0}
     correct = {'fever': 0, 'visual': 0, 'triage': 0}
@@ -277,7 +314,7 @@ def main(config_path: str):
     set_seed(config.get('seed', 42))
     device = get_device()
     
-    # Data
+    # Data with modality dropout
     train_loader, val_loader, info = create_fusion_dataloaders(
         rgb_metadata_path=config['data']['rgb_metadata_path'],
         rgb_images_dir=config['data']['rgb_images_dir'],
@@ -289,12 +326,13 @@ def main(config_path: str):
         subset_frac=config['data'].get('subset_frac', 1.0),
         val_split=config['data'].get('val_split', 0.2),
         num_workers=config['training'].get('num_workers', 4),
-        random_seed=config.get('seed', 42)
+        random_seed=config.get('seed', 42),
+        modality_dropout_p=config['training'].get('modality_dropout_p', 0.2)
     )
     
     # Load pretrained encoders
     rgb_encoder = RGBEncoder(
-        pretrained=False,  # We'll load weights
+        pretrained=False,
         frozen=config['model']['rgb_frozen'],
         output_dim=config['model']['rgb_output_dim'],
         num_classes=info['num_visual_classes']
@@ -329,10 +367,8 @@ def main(config_path: str):
     
     if config['model'].get('tabular_checkpoint'):
         ckpt = torch.load(config['model']['tabular_checkpoint'], map_location=device)
-        # Tabular encoder is part of a larger model
         full_state = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
         tabular_state = {k.replace('encoder.', ''): v for k, v in full_state.items() if k.startswith('encoder.')}
-        # Also try without prefix
         if not tabular_state:
             tabular_state = {k: v for k, v in full_state.items() if not k.startswith('disease_head') and not k.startswith('fever_head') and not k.startswith('triage_head')}
         tabular_encoder.load_state_dict(tabular_state, strict=False)
@@ -376,13 +412,46 @@ def main(config_path: str):
         optimizer, T_max=config['training']['epochs']
     )
     
+    # Resume from checkpoint if exists
     checkpoint_dir = Path(config['training']['checkpoint_dir'])
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    
+    resume_path = checkpoint_dir / 'checkpoint_last.pt'
+    start_epoch = 1
     best_val_acc = 0.0
+    best_val_loss = float('inf')
+    patience_counter = 0
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
     
-    for epoch in range(1, config['training']['epochs'] + 1):
+    if resume_path.exists():
+        print(f"Resuming from {resume_path}")
+        checkpoint = torch.load(resume_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_acc = checkpoint.get('best_val_acc', 0.0)
+        best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        patience_counter = checkpoint.get('patience_counter', 0)
+        history = checkpoint.get('history', history)
+    
+    if resume_path.exists() and 'optimizer_state_dict' in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    
+    if resume_path.exists() and 'scheduler_state_dict' in checkpoint:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=config['training']['epochs']
+        )
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        for _ in range(start_epoch - 1):
+            scheduler.step()
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=config['training']['epochs']
+        )
+    
+    # Early stopping config
+    early_stopping_patience = config['training'].get('early_stopping_patience', 5)
+    early_stopping_min_delta = config['training'].get('early_stopping_min_delta', 1e-4)
+    
+    for epoch in range(start_epoch, config['training']['epochs'] + 1):
         train_loss, train_acc = train_epoch(model, train_loader, criteria, optimizer, device, epoch)
         val_loss, val_acc, val_preds, val_labels = validate(model, val_loader, criteria, device, epoch)
         
@@ -400,34 +469,61 @@ def main(config_path: str):
         
         # Save best model (based on average of three accuracies)
         avg_val_acc = np.mean([val_acc['visual'], val_acc['fever'], val_acc['triage']])
+        val_total_loss = sum(val_loss.values())
+        
         if avg_val_acc > best_val_acc:
             best_val_acc = avg_val_acc
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
                 'val_acc': val_acc,
+                'val_loss': val_total_loss,
+                'best_val_acc': best_val_acc,
+                'best_val_loss': best_val_loss,
                 'config': config,
-                'visual_class_names': info['visual_class_names']
+                'visual_class_names': info['visual_class_names'],
+                'history': history
             }, checkpoint_dir / 'best_model.pt')
             print(f"  -> Saved best model (avg_val_acc={avg_val_acc:.2f}%)")
         
-        if epoch % config['training'].get('save_every', 5) == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_acc': val_acc,
-                'config': config
-            }, checkpoint_dir / f'checkpoint_epoch_{epoch}.pt')
+        # Save last checkpoint (for resuming)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'val_acc': val_acc,
+            'val_loss': val_total_loss,
+            'best_val_acc': best_val_acc,
+            'best_val_loss': best_val_loss,
+            'patience_counter': patience_counter,
+            'config': config,
+            'history': history
+        }, checkpoint_dir / 'checkpoint_last.pt')
+        
+        # Early stopping check
+        if val_total_loss < best_val_loss - config['training'].get('early_stopping_min_delta', 1e-4):
+            best_val_loss = val_total_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= config['training'].get('early_stopping_patience', 5):
+                print(f"Early stopping triggered after {epoch} epochs (patience={config['training'].get('early_stopping_patience', 5)})")
+                break
     
     torch.save({
-        'epoch': config['training']['epochs'],
+        'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
         'val_acc': val_acc,
+        'val_loss': val_total_loss,
+        'best_val_acc': best_val_acc,
         'config': config,
-        'visual_class_names': info['visual_class_names']
+        'visual_class_names': info['visual_class_names'],
+        'history': history
     }, checkpoint_dir / 'final_model.pt')
     
     np.save(checkpoint_dir / 'history.npy', history)

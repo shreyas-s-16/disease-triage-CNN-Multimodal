@@ -3,7 +3,7 @@ data:
   root_dir: "data/thermal/raw/terravic"
   image_size: 224
   subset_frac: 1.0
-  val_split: 0.2
+  splits_path: "data/thermal/processed/splits.csv"
 
 model:
   pretrained: true
@@ -20,5 +20,7 @@ training:
   save_every: 10
   num_workers: 4
   temperature: 0.5
+  early_stopping_patience: 5
+  early_stopping_min_delta: 1e-4
 
 seed: 42

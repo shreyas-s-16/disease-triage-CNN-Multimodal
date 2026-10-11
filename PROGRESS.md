@@ -2,15 +2,14 @@
 
 ## Phase 1 — Data Acquisition
 
-### Status: ✅ Complete
+### Status: 🔄 In Progress
 
 ### RGB Branch (HAM10000)
 - ✅ Downloaded via Hugging Face (BMN95/ham10000-skin-lesion-classifier-data) to `data/rgb/raw/`
 - ✅ Balanced subset created: 1,757 images across 7 classes (300 each for nv, mel, bkl, bcc, akiec; 142 vasc; 115 df)
 - ✅ Metadata saved: `data/rgb/raw/HAM10000_metadata_balanced_subset.csv`
-- ⏳ Image download in progress (~267/1757 downloaded via HF API, slow)
-- **Note**: Only 267 images (all bkl class) currently available locally; full balanced subset will download over time
-- Class distribution in metadata: nv=300, mel=300, bkl=300, bcc=300, akiec=300, vasc=142, df=115
+- ⏳ **Full image download in progress** - Kaggle/Harvard Dataverse download running (267/10015 images so far)
+- Class distribution in metadata: nv=6705, mel=1113, bkl=1099, bcc=514, akiec=327, vasc=142, df=115
 
 ### Tabular Branch (Disease Symptom Prediction)
 - ✅ Downloaded via Kaggle API: `itachi9604/disease-symptom-description-dataset`
@@ -29,48 +28,59 @@
 
 ---
 
-## Phase 2 — Fast Baseline Pass
+## Phase 2 — Fix Fusion Design (Phase B)
 
-### Status: ✅ Complete
+### Status: 🔄 In Progress
 
-### RGB Branch
-- ✅ **COMPLETED** - 8 epochs trained on MPS (Apple Silicon GPU)
-- Train Acc: 99.5%, Val Acc: 100% (on 267 bkl-class images only)
-- Model saved to: `checkpoints/rgb/best_model.pt`
-- Config: `configs/rgb_fast.yaml`
-
-### Tabular Branch
-- ✅ **COMPLETED** - 8 epochs trained on MPS
-- Train Acc: 100% disease, 100% fever, 100% triage
-- Val Acc: 100% across all tasks
-- Model saved to: `checkpoints/tabular/best_model.pt`
-- Encoders saved for inference
-- Config: `configs/tabular_fast.yaml`
-
-### Thermal Branch
-- ✅ **COMPLETED** - 5 epochs trained on MPS (Contrastive pretraining)
-- Train Loss: 2.45, Val Loss: 2.43 (NT-Xent loss decreasing)
-- Model saved to: `checkpoints/thermal/best_model.pt`
-- Config: `configs/thermal_fast.yaml`
+### Design Decision: Unpaired Multimodal Training
+- **Problem**: Current FusionDataset pairs i-th RGB, thermal, and tabular samples from unrelated datasets, so fever/triage labels have no relation to the image.
+- **Solution**:
+  1. Train visual head ONLY on real labelled HAM10000 images (RGB branch, frozen-then-unfrozen EfficientNet-B0)
+  2. Train fever and triage heads ONLY on tabular symptom data
+  3. Use thermal encoder as contrastively pre-trained features; do not fabricate paired labels
+  4. Fusion at inference accepts any subset of modalities (missing-modality masking: zero the projection and mask in attention)
+  4. During training, randomly drop modalities (modality dropout)
 
 ---
 
-## Phase 3 — Fusion Model
+## Phase 3 — Training Quality (Phase C)
 
-### Status: ✅ Complete
+### Status: ⏳ Planned
+- Stratified 70/15/15 train/val/test split for RGB (seed 42), saved to data/rgb/processed/splits.csv
+- Add early stopping (patience 5 on val loss) to all training scripts
+- Run configs/*_full.yaml (RGB 50 epochs, others up to 100 with early stopping)
+- Checkpoint best and last; keep runs resumable
+- Tabular: report harder check (hold out whole symptom-combination duplicates, or add 10% symptom dropout noise)
 
-### Architecture
-- RGB encoder + Thermal encoder + Tabular encoder → Concat/Attention fusion → 3 output heads:
-  1. Fever/vitals flag (binary)
-  2. Visual condition class (7 classes: akiec, bcc, bkl, df, mel, nv, vasc)
-  3. Overall triage (3 classes: mild, moderate, refer)
+---
 
-### Results (Fast Pass)
-- ✅ **COMPLETED** - 8 epochs trained on MPS
-- Val Acc: Visual=100%, Fever=90%, Triage=90%
-- Average Val Acc: 93.33%
-- Model saved to: `checkpoints/fusion/best_model.pt`
-- Config: `configs/fusion_fast.yaml`
+## Phase 4 — Evaluation (Phase D)
+
+### Status: ⏳ Planned
+- results/rgb/metrics.json, results/tabular/metrics.json, results/fusion/metrics.json
+- results/<branch>/confusion_matrix.png, training_curves.png
+- Grad-CAM overlays for 12 test images in results/rgb/gradcam/
+- results/rgb/sample_predictions.png: grid of 12 test images with actual vs predicted + confidence
+- Commit demo sample (20 images, <5 MB) to data/demo_samples/
+
+---
+
+## Phase 5 — UI (Phase E)
+
+### Status: ⏳ Planned
+- Fix symptom-count mismatch: load symptom list from saved tabular encoder metadata
+- Make UI load best_model.pt for all branches and show disclaimer
+- Launch Streamlit headless and capture screenshots (Playwright/Chromium) into screenshots/
+
+---
+
+## Phase 6 — Delivery (Phase F)
+
+### Status: ⏳ Planned
+- Commit checkpoints/*/best_model.pt via Git LFS
+- Commit results/, screenshots/, logs/, updated README.md and PROGRESS.md
+- Update .gitignore so none of the above is ignored
+- Push to GitHub and print commit URL
 
 ---
 

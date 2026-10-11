@@ -146,7 +146,7 @@ class TabularEncoder(nn.Module):
 
 
 class FusionEncoder(nn.Module):
-    """Multi-modal fusion encoder with attention."""
+    """Multi-modal fusion encoder with attention and missing-modality masking."""
     
     def __init__(
         self,
@@ -186,6 +186,11 @@ class FusionEncoder(nn.Module):
         
         self.output_dim = fusion_dim
     
+    def _get_modality_mask(self, x: torch.Tensor) -> torch.Tensor:
+        """Detect if modality is all zeros (missing). Returns boolean mask [B]."""
+        # Sum over feature dim, if sum is near zero, modality is missing
+        return x.abs().sum(dim=1) < 1e-6
+    
     def forward(
         self,
         rgb_features: torch.Tensor,
@@ -200,16 +205,32 @@ class FusionEncoder(nn.Module):
         Returns:
             fused_features: [B, fusion_dim]
         """
+        # Detect missing modalities
+        rgb_missing = self._get_modality_mask(rgb_features)
+        thermal_missing = self._get_modality_mask(thermal_features)
+        tabular_missing = self._get_modality_mask(tabular_features)
+        
         # Project to common dimension
         rgb_proj = self.rgb_proj(rgb_features).unsqueeze(1)      # [B, 1, fusion_dim]
         thermal_proj = self.thermal_proj(thermal_features).unsqueeze(1)  # [B, 1, fusion_dim]
         tabular_proj = self.tabular_proj(tabular_features).unsqueeze(1)  # [B, 1, fusion_dim]
         
+        # Create attention mask for missing modalities
+        # True = masked (don't attend), False = attend
+        batch_size = rgb_features.size(0)
+        attn_mask = torch.zeros(batch_size, 3, dtype=torch.bool, device=rgb_features.device)
+        attn_mask[:, 0] = rgb_missing
+        attn_mask[:, 1] = thermal_missing
+        attn_mask[:, 2] = tabular_missing
+        
         # Concatenate for attention
         modal_features = torch.cat([rgb_proj, thermal_proj, tabular_proj], dim=1)  # [B, 3, fusion_dim]
         
-        # Self-attention across modalities
-        attended, _ = self.attention(modal_features, modal_features, modal_features)
+        # Self-attention across modalities with masking
+        attended, _ = self.attention(
+            modal_features, modal_features, modal_features,
+            key_padding_mask=attn_mask
+        )
         
         # Flatten and pass through fusion MLP
         fused = attended.flatten(1)  # [B, 3 * fusion_dim]
